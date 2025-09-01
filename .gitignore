@@ -20,4 +20,9 @@ Data/*
 !Data/**/*.csv
 !Data/README.md
 !Data/.gitkeep
-
+Data/**/*.png
+Data/**/*.jpg
+Data/**/*.jpeg
+Data/**/*.svg
+Data/**/*.pdf
+Data/Charts/
