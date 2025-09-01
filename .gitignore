@@ -1,0 +1,38 @@
+# --- Python build & cache ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+*.log
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+.venv*/
+venv*/
+
+# --- OS/editor noise ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Environment / secrets ---
+.env
+.env.*
+
+# --- Project data rules ---
+# Keep the Data folder in the repo, but ignore generated CSVs inside it.
+Data/*
+!Data/.gitkeep
+!Data/README.md
