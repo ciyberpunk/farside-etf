@@ -55,22 +55,30 @@ def plot_asset(name: str, df: pd.DataFrame):
 
     fig, ax = plt.subplots(figsize=(12, 6))
 
-    # Bars: inflow (blue), outflow (red)
+    # Bars: inflow (blue), outflow (red) — plotted on 'ax'
     ax.bar(df["date"], pos, width=0.85, color="#1f77b4", label="Daily inflow")  # blue
     ax.bar(df["date"], neg, width=0.85, color="#d62728", label="Daily outflow")  # red
     ax.set_ylabel("USD millions (daily)")
 
-    # Line: cumulative on a secondary axis
+    # Line: cumulative on a secondary axis 'ax2'
     ax2 = ax.twinx()
     ax2.plot(
         df["date"],
         df["cumulative_usd_millions"],
-        label="Cumulative (rhs)",
+        label="Cumulative",
         color="black",
         linewidth=1.8,
         zorder=3,
     )
     ax2.set_ylabel("USD millions (cumulative)")
+
+    # ---- Swap y-axis sides (reverse) ----
+    # Put DAILY (bars) on the RIGHT and CUMULATIVE (line) on the LEFT
+    ax.yaxis.set_label_position("right")
+    ax.yaxis.tick_right()
+    ax2.yaxis.set_label_position("left")
+    ax2.yaxis.tick_left()
+    # -------------------------------------
 
     # Title, grid, ticks
     ax.set_title(f"{name.upper()} spot ETF — daily flows (bars) & cumulative (line)")
