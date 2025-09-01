@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Farside ETF Flows</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 20px; }
+    .chart { max-width: 1200px; margin: 30px auto; }
+  </style>
+</head>
+<body>
+  <h1>Bitcoin & Ethereum ETF Flows</h1>
+  <div id="btc" class="chart"></div>
+  <div id="eth" class="chart"></div>
+  <script>
+    async function loadCSV(path) {
+      const res = await fetch(path);
+      const text = await res.text();
+      const lines = text.trim().split(/\r?\n/);
+      const header = lines[0].split(",");
+      const colIndex = Object.fromEntries(header.map((h,i)=>[h.trim().toLowerCase(), i]));
+      const rows = lines.slice(1).map(line => line.split(","));
+      const parseNum = s => {
+        const v = parseFloat(s.replace(/,/g,""));
+        return isNaN(v) ? 0 : v;
+      };
+      const data = rows.map(r => ({
+        date: r[colIndex["date"]],
+        total: parseNum(r[colIndex["total_usd_millions"]]),
+        cumulative: parseNum(r[colIndex["cumulative_usd_millions"]])
+      }));
+      // sort by date in case
+      data.sort((a,b)=> new Date(a.date) - new Date(b.date));
+      return data;
+    }
+
+    function plotDailyCumulative(elId, title, data) {
+      const x = data.map(d => d.date);
+      const y = data.map(d => d.total);
+      const ycum = data.map(d => d.cumulative);
+      const colors = y.map(v => v >= 0 ? "#1f77b4" : "#d62728"); // blue inflow, red outflow
+
+      const bar = {
+        type: "bar",
+        x, y,
+        name: "Daily flow (USD m)",
+        marker: { color: colors },
+        hovertemplate: "Date=%{x}<br>Flow=%{y:.1f}m<extra></extra>"
+      };
+      const line = {
+        type: "scatter",
+        x, y: ycum,
+        name: "Cumulative (USD m)",
+        mode: "lines",
+        line: { width: 2 },
+        yaxis: "y2",
+        hovertemplate: "Date=%{x}<br>Cumulative=%{y:.0f}m<extra></extra>"
+      };
+      const layout = {
+        title,
+        margin: { l: 40, r: 30, t: 60, b: 40 },
+        hovermode: "x unified",
+        legend: { orientation: "h", y: 1.1 },
+        xaxis: { title: "" },
+        yaxis: { title: "Daily (USD m)" },
+        yaxis2: { title: "Cumulative (USD m)", overlaying: "y", side: "right" }
+      };
+      Plotly.newPlot(elId, [bar, line], layout, {responsive: true});
+    }
+
+    (async function(){
+      const btc = await loadCSV("../Data/bitcoin_etf_totals_daily.csv");
+      const eth = await loadCSV("../Data/ethereum_etf_totals_daily.csv");
+      plotDailyCumulative("btc", "Bitcoin ETF Daily vs Cumulative", btc);
+      plotDailyCumulative("eth", "Ethereum ETF Daily vs Cumulative", eth);
+    })();
+  </script>
+</body>
+</html>
