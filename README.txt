@@ -1,4 +1,4 @@
-This repo contains two Python scripts that scrape the daily ETF flow tables from Farside and write clean CSVs to the `Data/` folder.
+This repo contains Python scripts that scrape the daily ETF flow tables from Farside, write them to CSV files then visualize the results on a Github webpage.
 
 - `btc_farside_to_csv.py` – Bitcoin ETFs
 - `eth_farside_to_csv.py` – Ethereum ETFs
@@ -17,3 +17,4 @@ pip install -r requirements.txt
 
 python btc_farside_to_csv.py
 python eth_farside_to_csv.py
+visualize_totals.py

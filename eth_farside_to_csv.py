@@ -1,205 +1,177 @@
 # eth_farside_to_csv.py
-# Pulls ETH ETF daily flow table from Farside and writes clean CSVs.
-# Doesn't scrape the site's "Total" column; computes Total by summing fund columns.
+# Pulls ETH ETF daily flow table from Farside and writes clean CSVs to Data/ and docs/Data/.
+# IMPORTANT: For ETH, we ALWAYS recompute 'Total' as the sum of the fund columns (per your request).
+import io
 import re
-import sys
+import shutil
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-ETH_URL = "https://farside.co.uk/ethereum-etf-flow-all-data/"
+URL = "https://farside.co.uk/ethereum-etf-flow-all-data/"
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0.0.0 Safari/537.36"
 )
 
-# Expected ETH tickers in column order on Farside (left-to-right after the date)
-ETH_TICKERS: List[str] = [
-    "ETHA",  # BlackRock
-    "FETH",  # Fidelity
-    "ETHW",  # Bitwise
-    "TETH",  # 21Shares
-    "ETHV",  # VanEck
-    "QETH",  # Invesco
-    "EZET",  # Franklin
-    "ETHE",  # Grayscale (Spot ETF)
-    "ETH",   # Grayscale (second column on the site)
-]
+# Folders
+REPO_ROOT = Path(__file__).resolve().parent
+DATA_DIR = REPO_ROOT / "Data"
+DOCS_DATA_DIR = REPO_ROOT / "docs" / "Data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DOCS_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# Where to save
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "Data"
-DATA_DIR.mkdir(exist_ok=True)
+# Columns we never sum into Total if the site ever hides extras in the table
+EXCLUDE_COLS = {"date", "total", "btc", "eth", "average", "maximum", "minimum"}
 
-# ---------- helpers ----------
+def _publish_to_pages(outputs):
+    """Copy CSVs written to Data/ into docs/Data/ so GitHub Pages can serve them."""
+    for src in outputs:
+        dst = DOCS_DATA_DIR / src.name
+        shutil.copy2(src, dst)
 
-DATE_RE = re.compile(r"^\d{1,2}\s+[A-Za-z]{3}\s+\d{4}$")  # e.g., "11 Jan 2024"
-
-def _norm_text(s: str) -> str:
-    if s is None:
-        return ""
-    s = str(s)
+def _norm(s: str) -> str:
+    s = ("" if s is None else str(s))
     s = s.replace("\xa0", " ").replace("\u2009", " ")
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
-def _to_float(x) -> float:
-    """Clean strings like '1,234.5', '(12.3)', '-', '—' into floats."""
-    if x is None:
+def _norm_cols(cols: List[str]) -> List[str]:
+    return [_norm(c) for c in cols]
+
+def _clean_num(x):
+    if pd.isna(x):
         return 0.0
-    s = _norm_text(x)
+    s = str(x).strip()
+    s = s.replace(",", "").replace("\u2009", "").replace("\xa0", " ")
     if s in {"", "-", "–", "—"}:
         return 0.0
-    # strip commas / thin spaces / non-break spaces
-    s = s.replace(",", "").replace("\u2009", "").replace("\xa0", "")
-    # remove trailing footnote markers like '*'
-    s = s.rstrip("*")
-    if s.startswith("(") and s.endswith(")"):
+    if s.startswith("(") and s.endswith(")"):  # accounting negative
         s = "-" + s[1:-1]
+    s = s.replace("−", "-")  # unicode minus
     try:
         return float(s)
     except Exception:
         return 0.0
 
-def _fetch_html(url: str) -> str:
-    sess = requests.Session()
-    sess.headers.update({"User-Agent": UA})
-    r = sess.get(url, timeout=30)
-    r.raise_for_status()
-    return r.text
+def _parse_tables_with_pandas(html_fragment: str) -> List[pd.DataFrame]:
+    dfs = []
+    for flavor in ("lxml", "html5lib"):
+        try:
+            found = pd.read_html(io.StringIO(html_fragment), flavor=flavor, thousands=",")
+            for df in found:
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = [
+                        " ".join([str(x) for x in tup if str(x) != "nan"]).strip()
+                        for tup in df.columns
+                    ]
+                df.columns = _norm_cols(list(df.columns))
+                dfs.append(df)
+            if dfs:
+                break
+        except Exception:
+            continue
+    return dfs
 
-def _pick_eth_table(soup: BeautifulSoup):
-    """
-    Return the <table> that contains most of the ETH tickers.
-    The ETH page doesn't always label the first column 'Date', so don't depend on that.
-    """
-    best_tbl, best_hits = None, -1
+def _pick_main_daily_table(soup: BeautifulSoup) -> pd.DataFrame | None:
+    best, best_score = None, (-1, -1)
     for tbl in soup.find_all("table"):
-        text = _norm_text(tbl.get_text(" "))
-        hits = sum(1 for t in ETH_TICKERS if t in text)
-        if hits > best_hits:
-            best_tbl, best_hits = tbl, hits
-    return best_tbl
+        for df in _parse_tables_with_pandas(str(tbl)):
+            if "Date" not in df.columns:
+                continue
+            # score: more rows + more numeric-like columns
+            score = (len(df), sum(c != "Date" for c in df.columns))
+            if score > best_score:
+                best, best_score = df, score
+    return best
 
-def _table_rows(tbl) -> List[List[str]]:
-    rows = []
-    for tr in tbl.find_all("tr"):
-        cells = [ _norm_text(td.get_text()) for td in tr.find_all(["th","td"]) ]
-        if cells:
-            rows.append(cells)
-    return rows
+def _load_raw_table() -> pd.DataFrame:
+    s = requests.Session()
+    s.headers.update({"User-Agent": UA})
+    r = s.get(URL, timeout=30)
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "lxml")
+    df = _pick_main_daily_table(soup)
+    if df is None or "Date" not in df.columns:
+        raise RuntimeError("Could not find the main daily table on Farside (no 'Date' header).")
+    return df
 
-def _parse_eth_daily_rows(rows_2d: List[List[str]]) -> pd.DataFrame:
-    """
-    Build a DataFrame with columns: ['date'] + ETH_TICKERS
-    We ignore any 'Fee'/'Seed' rows and any trailing 'Total' cell from the site.
-    """
-    parsed = []
-    for r in rows_2d:
-        if not r:
+def _tidy_wide(df_raw: pd.DataFrame) -> pd.DataFrame:
+    df = df_raw.copy()
+
+    # Keep only true daily rows (drop footer summary rows)
+    df["date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
+    df = df[df["date"].notna()].drop(columns=["Date"])
+
+    # Convert values to floats (handle commas and (negatives))
+    for c in list(df.columns):
+        if c == "date":
             continue
-        first = _norm_text(r[0])
-        if not DATE_RE.match(first):
-            continue  # skip header/fee/seed/etc.
-        # After the date, the next cells are the nine tickers; site may also have a trailing "Total" — ignore it.
-        # Ensure we have at least date + nine numbers:
-        if len(r) < 1 + len(ETH_TICKERS):
-            # Some pages compress cells; skip incomplete rows
-            continue
-        vals = r[1 : 1 + len(ETH_TICKERS)]
-        parsed.append([first] + vals)
+        df[c] = df[c].map(_clean_num)
 
-    if not parsed:
-        raise RuntimeError("No daily rows found (couldn't locate any 'DD Mon YYYY' dates).")
+    # ALWAYS recompute 'Total' as the sum of fund columns (ignore any provided Total on page)
+    sum_cols = [c for c in df.columns if c.lower() not in EXCLUDE_COLS and c != "date"]
+    df["Total"] = df[sum_cols].sum(axis=1)
 
-    cols = ["date"] + ETH_TICKERS
-    df = pd.DataFrame(parsed, columns=cols)
-
-    # Convert date and numerics
-    df["date"] = pd.to_datetime(df["date"], format="%d %b %Y", errors="coerce")
-    for c in ETH_TICKERS:
-        df[c] = df[c].map(_to_float)
-
-    # drop any bad date rows (shouldn't happen) and sort ascending
-    df = df[df["date"].notna()].sort_values("date").reset_index(drop=True)
+    # Sort by date (ascending)
+    df = df.sort_values("date").reset_index(drop=True)
     return df
 
 def _force_daily_zero_fill(df_wide: pd.DataFrame) -> pd.DataFrame:
     full = pd.date_range(df_wide["date"].min(), df_wide["date"].max(), freq="D")
-    out = (
+    df = (
         df_wide.set_index("date")
-               .reindex(full)
-               .fillna(0.0)
-               .rename_axis("date")
-               .reset_index()
+        .reindex(full)
+        .fillna(0.0)
+        .rename_axis("date")
+        .reset_index()
     )
-    return out
+    return df
 
-# ---------- main pipeline ----------
-
-def build_outputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    html = _fetch_html(ETH_URL)
-    soup = BeautifulSoup(html, "lxml")
-
-    tbl = _pick_eth_table(soup)
-    if tbl is None:
-        raise RuntimeError("Couldn't find an ETH ETF table on the page.")
-
-    rows = _table_rows(tbl)
-    wide = _parse_eth_daily_rows(rows)
-
-    # Compute Total as the sum of fund columns (do NOT read site total)
-    wide["Total"] = wide[ETH_TICKERS].sum(axis=1)
-
-    # Fill to daily calendar (zeros on missing dates)
+def build_outputs() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    raw = _load_raw_table()
+    wide = _tidy_wide(raw)
     wide = _force_daily_zero_fill(wide)
 
-    # Build long/totals outputs
-    totals = (
-        wide[["date", "Total"]]
-        .rename(columns={"Total": "total_usd_millions"})
-        .copy()
-    )
+    # totals-only (plus cumulative)
+    totals = wide[["date", "Total"]].rename(columns={"Total": "total_usd_millions"}).copy()
     totals["cumulative_usd_millions"] = totals["total_usd_millions"].cumsum()
 
+    # long (tidy) — one row per date per fund (excluding the recomputed Total)
+    melt_cols = [c for c in wide.columns if c not in {"date", "Total"}]
     long_ = wide.melt(
-        id_vars="date",
-        value_vars=ETH_TICKERS,  # long form is funds only
-        var_name="fund",
-        value_name="flow_usd_millions",
+        id_vars="date", value_vars=melt_cols, var_name="fund", value_name="flow_usd_millions"
     )
 
     return wide, long_, totals
 
 def write_csvs():
     wide, long_, totals = build_outputs()
-
-    # Friendly date format
+    # Consistent date formatting
     for df in (wide, long_, totals):
         df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
 
-    (DATA_DIR / "ethereum_etf_flows_wide_daily.csv").write_text(
-        wide.to_csv(index=False), encoding="utf-8"
-    )
-    (DATA_DIR / "ethereum_etf_flows_long_daily.csv").write_text(
-        long_.to_csv(index=False), encoding="utf-8"
-    )
-    (DATA_DIR / "ethereum_etf_totals_daily.csv").write_text(
-        totals.to_csv(index=False), encoding="utf-8"
-    )
+    # Write into Data/
+    out_wide = DATA_DIR / "ethereum_etf_flows_wide_daily.csv"
+    out_long = DATA_DIR / "ethereum_etf_flows_long_daily.csv"
+    out_totals = DATA_DIR / "ethereum_etf_totals_daily.csv"
+
+    wide.to_csv(out_wide, index=False)
+    long_.to_csv(out_long, index=False)
+    totals.to_csv(out_totals, index=False)
+
+    # Mirror to docs/Data/ for GitHub Pages
+    _publish_to_pages([out_wide, out_long, out_totals])
 
     print("Wrote:")
-    print(f"  - {DATA_DIR / 'ethereum_etf_flows_wide_daily.csv'}")
-    print(f"  - {DATA_DIR / 'ethereum_etf_flows_long_daily.csv'}")
-    print(f"  - {DATA_DIR / 'ethereum_etf_totals_daily.csv'}")
+    print(f"  - {out_wide}")
+    print(f"  - {out_long}")
+    print(f"  - {out_totals}")
+    print("Also copied to docs/Data for GitHub Pages.")
 
 if __name__ == "__main__":
-    try:
-        write_csvs()
-    except Exception as e:
-        print("ERROR:", e, file=sys.stderr)
-        sys.exit(1)
+    write_csvs()
