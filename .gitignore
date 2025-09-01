@@ -1,38 +1,23 @@
-# --- Python build & cache ---
+# --- Python ---
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.so
 *.egg-info/
-.eggs/
-build/
-dist/
-*.log
 
-# --- Virtual environments ---
+# --- Environments ---
 .venv/
 venv/
 env/
-ENV/
-.venv*/
-venv*/
+*.env
 
-# --- OS/editor noise ---
+# --- OS cruft ---
 .DS_Store
-Thumbs.db
-.vscode/
-.idea/
 
-# --- Jupyter ---
-.ipynb_checkpoints/
-
-# --- Environment / secrets ---
-.env
-.env.*
-
-# --- Project data rules ---
-# Keep the Data folder in the repo, but ignore generated CSVs inside it.
+# --- Data directory rules ---
+# We want to track CSVs in Data/, plus the README and .gitkeep.
+# If you had previously ignored Data/*, undo that pattern.
 Data/*
-!Data/.gitkeep
+!Data/*.csv
+!Data/**/*.csv
 !Data/README.md
+!Data/.gitkeep
+
