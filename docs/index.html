@@ -1,84 +1,247 @@
-<script>
-  function makeChart(canvasId, series, titleText) {
-    const ctx = document.getElementById(canvasId).getContext("2d");
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Farside ETF Flows</title>
+  <style>
+    :root { 
+      --bg: #0e0f12; 
+      --panel: #15171c; 
+      --text: #e9eef5; 
+      --muted: #a7b0bc; 
+      --accent: #3aa3ff;
+      --good: #1f77b4; /* inflow (blue) */
+      --bad:  #d62728; /* outflow (red) */
+    }
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    }
+    .wrap {
+      max-width: 1100px;
+      margin: 32px auto 80px;
+      padding: 0 16px;
+    }
+    header { margin-bottom: 18px; }
+    h1 { margin: 0 0 6px; font-size: 1.6rem; font-weight: 650; }
+    p.note { margin: 4px 0 18px; color: var(--muted); font-size: 0.95rem; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid #23262d;
+      border-radius: 14px;
+      padding: 16px 16px 8px;
+      margin-bottom: 18px;
+      box-shadow: 0 1px 0 rgba(255,255,255,0.03), 0 12px 30px rgba(0,0,0,0.35);
+    }
+    .chart-wrap { position: relative; height: 420px; }
+    .title-row {
+      display: flex; align-items: baseline; justify-content: space-between;
+      gap: 12px; margin: 0 2px 8px;
+    }
+    .title-row h2 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+    .err { color: #ff8c99; font-size: 0.9rem; margin-top: 6px; display: none; }
+    a, a:visited { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    footer { margin-top: 26px; color: var(--muted); font-size: 0.9rem; }
+  </style>
+  <!-- Chart.js + time adapter (adapter is REQUIRED for time axis) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Spot ETF Flows — Daily (bars) &amp; Cumulative (line)</h1>
+      <p class="note">Data comes from CSVs in <code>Data/</code>. Bars show daily net flow (USD&nbsp;mm). Line shows cumulative total.</p>
+    </header>
 
-    const pos = series.totals.map(v => Math.max(0, v));
-    const neg = series.totals.map(v => Math.min(0, v));
+    <section class="panel">
+      <div class="title-row">
+        <h2>Bitcoin</h2>
+        <small><a href="https://github.com/ciyberpunk/farside-etf/tree/main/Data" target="_blank" rel="noopener">CSV source</a></small>
+      </div>
+      <div class="chart-wrap"><canvas id="btcChart"></canvas></div>
+      <div id="btcErr" class="err"></div>
+    </section>
 
-    return new Chart(ctx, {
-      type: "bar",
-      data: {
-        labels: series.dates,
-        datasets: [
-          {
-            type: "bar",
-            label: "Daily inflow",
-            data: pos,
-            backgroundColor: getComputedStyle(document.documentElement).getPropertyValue('--good').trim() || "#1f77b4",
-            borderWidth: 0,
-            yAxisID: "y2"   // ← bars on RIGHT axis
-          },
-          {
-            type: "bar",
-            label: "Daily outflow",
-            data: neg,
-            backgroundColor: getComputedStyle(document.documentElement).getPropertyValue('--bad').trim() || "#d62728",
-            borderWidth: 0,
-            yAxisID: "y2"   // ← bars on RIGHT axis
-          },
-          {
-            type: "line",
-            label: "Cumulative",
-            data: series.cum,
-            borderColor: "#ffffff",
-            borderWidth: 2,
-            pointRadius: 0,
-            yAxisID: "y"    // ← line on LEFT axis
-          }
-        ]
-      },
-      options: {
-        maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        scales: {
-          x: {
-            type: "time",
-            time: { unit: "month" },
-            ticks: { color: "#c7cfdb" },
-            grid: { color: "rgba(255,255,255,0.08)" }
-          },
-          y: {
-            // LEFT axis → cumulative
-            title: { text: "USD (millions) - cumulative", display: true, color: "#c7cfdb" },
-            ticks: { color: "#c7cfdb" },
-            grid: { color: "rgba(255,255,255,0.08)" }
-          },
-          y2: {
-            // RIGHT axis → daily bars
-            position: "right",
-            title: { text: "USD (millions) - daily", display: true, color: "#c7cfdb" },
-            ticks: { color: "#c7cfdb" },
-            grid: { drawOnChartArea: false }
-          }
-        },
-        plugins: {
-          legend: { labels: { color: "#e9eef5" } },
-          tooltip: {
-            callbacks: {
-              label: (ctx) => {
-                const val = ctx.parsed.y;
-                return ` ${ctx.dataset.label}: ${val.toLocaleString(undefined, { maximumFractionDigits: 1 })}`;
-              }
-            }
-          },
-          title: {
-            display: true,
-            text: titleText,
-            color: "#e9eef5",
-            font: { weight: "600", size: 14 }
-          }
+    <section class="panel">
+      <div class="title-row">
+        <h2>Ethereum</h2>
+        <small><a href="https://github.com/ciyberpunk/farside-etf/tree/main/Data" target="_blank" rel="noopener">CSV source</a></small>
+      </div>
+      <div class="chart-wrap"><canvas id="ethChart"></canvas></div>
+      <div id="ethErr" class="err"></div>
+    </section>
+
+    <footer>
+      Tip: If your browser cached old CSVs, hard-refresh (<kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>). This page appends a cache-buster to CSV fetches.
+    </footer>
+  </div>
+
+  <script>
+    // Use RELATIVE paths (robust with or without query strings on GitHub Pages).
+    const CSV_BTC = "Data/bitcoin_etf_totals_daily.csv";
+    const CSV_ETH = "Data/ethereum_etf_totals_daily.csv";
+
+    function parseCSV(text) {
+      const lines = text.trim().split(/\r?\n/);
+      if (!lines.length) return { header: [], rows: [] };
+      const header = lines[0].split(",").map(s => s.trim());
+      const rows = lines.slice(1).map(line => line.split(",").map(s => s.trim()));
+      return { header, rows };
+    }
+
+    function coerceNumber(s) {
+      if (s == null) return NaN;
+      const t = s.replace(/[\u2009\u00A0,]/g, "").replace(/^\((.*)\)$/, "-$1");
+      const n = Number(t);
+      return Number.isFinite(n) ? n : NaN;
+    }
+
+    async function loadTotalsCsv(url) {
+      const bust = `v=${Date.now()}`;
+      const resp = await fetch(url + (url.includes("?") ? "&" : "?") + bust, { cache: "no-store" });
+      if (!resp.ok) throw new Error("HTTP " + resp.status + " for " + url);
+      const text = await resp.text();
+      const { header, rows } = parseCSV(text);
+
+      const idx = Object.fromEntries(header.map((h, i) => [h.toLowerCase(), i]));
+      const iDate  = idx["date"];
+      const iTotal = idx["total_usd_millions"] ?? idx["total"];
+      const iCum   = idx["cumulative_usd_millions"];
+      if (iDate == null || iTotal == null) {
+        throw new Error("Required columns not found: " + header.join(", "));
+      }
+
+      const dates = [], totals = [], cum = [];
+      let running = 0;
+      for (const r of rows) {
+        const d = new Date(r[iDate]);
+        if (Number.isNaN(d.getTime())) continue;
+        const t = coerceNumber(r[iTotal]);
+        if (!Number.isFinite(t)) continue;
+        dates.push(d);
+        totals.push(t);
+        if (iCum != null) {
+          const c = coerceNumber(r[iCum]);
+          cum.push(Number.isFinite(c) ? c : NaN);
+        } else {
+          running += t;
+          cum.push(running);
         }
       }
-    });
-  }
-</script>
+      return { dates, totals, cum };
+    }
+
+    function makeChart(canvasId, series, titleText) {
+      const ctx = document.getElementById(canvasId).getContext("2d");
+      const pos = series.totals.map(v => Math.max(0, v));
+      const neg = series.totals.map(v => Math.min(0, v));
+
+      return new Chart(ctx, {
+        data: {
+          labels: series.dates,
+          datasets: [
+            // CUMULATIVE LINE on LEFT axis (y)
+            {
+              type: "line",
+              label: "Cumulative",
+              data: series.cum,
+              borderColor: "#ffffff",
+              borderWidth: 2,
+              pointRadius: 0,
+              yAxisID: "y"     // ← LEFT axis
+            },
+            // DAILY BARS on RIGHT axis (y2)
+            {
+              type: "bar",
+              label: "Daily inflow",
+              data: pos,
+              backgroundColor: getComputedStyle(document.documentElement).getPropertyValue('--good').trim() || "#1f77b4",
+              borderWidth: 0,
+              yAxisID: "y2"    // ← RIGHT axis
+            },
+            {
+              type: "bar",
+              label: "Daily outflow",
+              data: neg,
+              backgroundColor: getComputedStyle(document.documentElement).getPropertyValue('--bad').trim() || "#d62728",
+              borderWidth: 0,
+              yAxisID: "y2"    // ← RIGHT axis
+            }
+          ]
+        },
+        options: {
+          maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          scales: {
+            x: {
+              type: "time",
+              time: { unit: "month" },
+              ticks: { color: "#c7cfdb" },
+              grid: { color: "rgba(255,255,255,0.08)" }
+            },
+            // LEFT axis → cumulative
+            y: {
+              position: "left",
+              title: { text: "USD (millions) - cumulative", display: true, color: "#c7cfdb" },
+              ticks: { color: "#c7cfdb" },
+              grid: { color: "rgba(255,255,255,0.08)" }
+            },
+            // RIGHT axis → daily bars
+            y2: {
+              position: "right",
+              title: { text: "USD (millions) - daily", display: true, color: "#c7cfdb" },
+              ticks: { color: "#c7cfdb" },
+              grid: { drawOnChartArea: false }
+            }
+          },
+          plugins: {
+            legend: { labels: { color: "#e9eef5" } },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => {
+                  const val = ctx.parsed.y;
+                  return ` ${ctx.dataset.label}: ${val.toLocaleString(undefined, { maximumFractionDigits: 1 })}`;
+                }
+              }
+            },
+            title: {
+              display: true,
+              text: titleText,
+              color: "#e9eef5",
+              font: { weight: "600", size: 14 }
+            }
+          }
+        }
+      });
+    }
+
+    async function init() {
+      try {
+        const btc = await loadTotalsCsv(CSV_BTC);
+        makeChart("btcChart", btc, "BTC spot ETF — cumulative (line, left) & daily (bars, right)");
+      } catch (e) {
+        const el = document.getElementById("btcErr");
+        el.textContent = e.message;
+        el.style.display = "block";
+        console.error(e);
+      }
+      try {
+        const eth = await loadTotalsCsv(CSV_ETH);
+        makeChart("ethChart", eth, "ETH spot ETF — cumulative (line, left) & daily (bars, right)");
+      } catch (e) {
+        const el = document.getElementById("ethErr");
+        el.textContent = e.message;
+        el.style.display = "block";
+        console.error(e);
+      }
+    }
+    init();
+  </script>
+</body>
+</html>
