@@ -2,221 +2,202 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <title>Farside ETF flows — BTC & ETH</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Farside ETF Flows — BTC & ETH</title>
-  <style>
-    :root { --bg: #ffffff; --fg: #111111; }
-    html, body { margin:0; padding:0; background:var(--bg); color:var(--fg); font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
-    header { padding: 16px 20px; border-bottom: 1px solid #eee; }
-    main { padding: 20px; max-width: 1100px; margin: 0 auto; }
-    h1 { font-size: 20px; margin: 0; }
-    .panel { margin: 26px 0; }
-    .panel h2 { font-size: 16px; font-weight: 600; margin: 0 0 10px; }
-    canvas { width: 100%; height: 420px; max-height: 60vh; }
-    .footnote { color:#666; font-size: 12px; margin-top: 6px; }
-  </style>
   <!-- Chart.js + date adapter -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+  <style>
+    :root { color-scheme: light; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    h1 { margin: 0 0 12px; font-size: 1.4rem; }
+    .wrap { max-width: 1200px; margin: 0 auto; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin-bottom: 24px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+    canvas { width: 100%; height: 420px; }
+    .err { color: #b91c1c; font-weight: 600; margin: 8px 0 0; }
+  </style>
 </head>
 <body>
-  <header>
-    <h1>Farside Spot ETF Flows — BTC & ETH</h1>
-  </header>
+<div class="wrap">
+  <h1>Spot ETF flows (daily bars) & cumulative (line)</h1>
 
-  <main>
-    <div class="panel">
-      <h2>Bitcoin — daily flows (bars) & cumulative (line)</h2>
-      <canvas id="btcChart"></canvas>
-      <div class="footnote">Daily bars: inflow (blue) / outflow (red). Line: cumulative net flows (right axis).</div>
-    </div>
+  <div class="card">
+    <h2 style="margin:0 0 8px;">BTC</h2>
+    <canvas id="btcChart"></canvas>
+    <div id="btcErr" class="err" hidden></div>
+  </div>
 
-    <div class="panel">
-      <h2>Ethereum — daily flows (bars) & cumulative (line)</h2>
-      <canvas id="ethChart"></canvas>
-      <div class="footnote">Daily bars: inflow (blue) / outflow (red). Line: cumulative net flows (right axis).</div>
-    </div>
-  </main>
+  <div class="card">
+    <h2 style="margin:0 0 8px;">ETH</h2>
+    <canvas id="ethChart"></canvas>
+    <div id="ethErr" class="err" hidden></div>
+  </div>
+</div>
 
-  <script>
-    // ---- helpers ----
-    const nf1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
-    const nf0 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+<script>
+  // --- tiny CSV parser for our simple files ---
+  async function readCSV(relPath) {
+    const res = await fetch(relPath, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${relPath}`);
+    return await res.text();
+  }
 
-    // Build a BASE so it works locally and on GitHub Pages (/farside-etf)
-    const BASE = window.location.pathname
-      .replace(/\/index\.html?$/i, "")
-      .replace(/\/$/, "");
+  function parseNumber(s) {
+    if (s == null) return NaN;
+    let t = String(s).trim().replace(/,/g, "");
+    if (t === "" || t === "-" || t === "–" || t === "—") return 0;
+    if (t.startsWith("(") && t.endsWith(")")) t = "-" + t.slice(1, -1);
+    const v = Number(t);
+    return Number.isFinite(v) ? v : NaN;
+  }
 
-    async function fetchCSV(path) {
-      const res = await fetch(path);
-      if (!res.ok) throw new Error(`HTTP ${res.status} for ${path}`);
-      return await res.text();
+  function parseCSV(text) {
+    const lines = text.trim().split(/\r?\n/);
+    if (!lines.length) return [];
+    const header = lines[0].split(",").map(h => h.trim().toLowerCase());
+    const dateIdx  = header.indexOf("date");
+    // Prefer 'total_usd_millions', fall back to 'total'
+    let totIdx = header.indexOf("total_usd_millions");
+    if (totIdx === -1) totIdx = header.indexOf("total");
+    if (dateIdx === -1 || totIdx === -1) return [];
+
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+      const cols = lines[i].split(",");
+      const d = new Date(cols[dateIdx]);
+      const t = parseNumber(cols[totIdx]);
+      if (!isNaN(d.valueOf()) && Number.isFinite(t)) rows.push({ date: d, total: t });
     }
+    return rows;
+  }
 
-    // very small CSV parser (assumes simple CSV without commas inside fields – which matches our generator)
-    function parseCSV(text) {
-      const lines = text.trim().split(/\r?\n/);
-      if (lines.length === 0) return [];
-      const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
-      return lines.slice(1).map(line => {
-        const cols = line.split(","); // safe given our CSV content
-        const row = {};
-        headers.forEach((h, i) => row[h] = (cols[i] ?? "").trim());
-        return row;
-      });
+  // Build series: ensure chronological order and compute cumulative here
+  function buildSeries(rows) {
+    const data = [...rows].sort((a, b) => a.date - b.date);
+    let run = 0;
+    const labels = [];
+    const pos = [];
+    const neg = [];
+    const cum = [];
+    for (const r of data) {
+      run += r.total;
+      labels.push(r.date);
+      pos.push(Math.max(r.total, 0));
+      neg.push(Math.min(r.total, 0));
+      cum.push(run);
     }
+    return { labels, pos, neg, cum };
+  }
 
-    function coerceNumber(x) {
-      if (x == null || x === "") return null;
-      const n = Number(x);
-      return Number.isFinite(n) ? n : null;
-    }
+  function fmt(n) {
+    return new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(n);
+  }
 
-    function toDateStrict(s) {
-      // CSV is YYYY-MM-DD from our Python scripts
-      // new Date('YYYY-MM-DD') is parsed as UTC by modern browsers; that’s fine for daily charts.
-      const d = new Date(s);
-      return isNaN(+d) ? null : d;
-    }
+  function makeChart(canvasId, series, title) {
+    const ctx = document.getElementById(canvasId).getContext("2d");
 
-    function buildSeries(rows) {
-      // Normalize keys (lowercase)
-      // Expect: date, total_usd_millions, cumulative_usd_millions
-      const norm = rows.map(r => ({
-        date: toDateStrict(r.date ?? r["Date"]),
-        total: coerceNumber(r.total_usd_millions ?? r.total ?? r["Total"]),
-        cumulative: coerceNumber(r.cumulative_usd_millions ?? r.cumulative ?? r["Cumulative"])
-      })).filter(r => r.date && r.total !== null);
-
-      // Sort ASCENDING by date so cumulative starts at the first day.
-      norm.sort((a, b) => a.date - b.date);
-
-      // If cumulative missing in CSV, compute it here (ascending)
-      if (norm.length && (norm[0].cumulative === null || norm.some(r => r.cumulative === null))) {
-        let run = 0;
-        for (const r of norm) {
-          run += r.total;
-          r.cumulative = run;
-        }
-      }
-
-      return norm;
-    }
-
-    function makeChart(canvasId, series, titleText) {
-      const ctx = document.getElementById(canvasId).getContext("2d");
-
-      const labels = series.map(r => r.date);
-      const daily = series.map(r => r.total);
-      const dailyPos = daily.map(v => (v > 0 ? v : 0));
-      const dailyNeg = daily.map(v => (v < 0 ? v : 0));
-      const cum = series.map(r => r.cumulative);
-
-      return new Chart(ctx, {
-        type: "bar",
-        data: {
-          labels,
-          datasets: [
-            {
-              type: "bar",
-              label: "Inflow (daily)",
-              data: dailyPos,
-              xAxisID: "x",
-              yAxisID: "yDaily",
-              backgroundColor: "#1f77b4"
-            },
-            {
-              type: "bar",
-              label: "Outflow (daily)",
-              data: dailyNeg,
-              xAxisID: "x",
-              yAxisID: "yDaily",
-              backgroundColor: "#d62728"
-            },
-            {
-              type: "line",
-              label: "Cumulative",
-              data: cum,
-              xAxisID: "x",
-              yAxisID: "yCum",
-              borderColor: "#111111",
-              backgroundColor: "transparent",
-              borderWidth: 2,
-              pointRadius: 0,
-              tension: 0.1
-            }
-          ]
-        },
-        options: {
-          responsive: true,
-          interaction: {
-            mode: "index",
-            intersect: false
+    return new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: series.labels,
+        datasets: [
+          {
+            type: "bar",
+            label: "Daily inflow",
+            data: series.pos,
+            yAxisID: "yDaily",
+            borderWidth: 0,
+            backgroundColor: "#1f77b4",
+            order: 2
           },
-          plugins: {
-            title: {
-              display: true,
-              text: titleText
-            },
-            tooltip: {
-              callbacks: {
-                // show the correct y for each dataset (Chart.js gives us that in parsed.y)
-                label: (ctx) => {
-                  const v = ctx.parsed.y;
-                  const label = ctx.dataset.label || "";
-                  // pretty-print with one decimal and explicit sign for daily bars
-                  if (label.includes("Inflow") || label.includes("Outflow")) {
-                    const pretty = (v >= 0 ? "+" : "") + nf1.format(v) + " M";
-                    return `${label}: ${pretty}`;
-                  }
-                  // cumulative
-                  return `${label}: ${nf1.format(v)} M`;
+          {
+            type: "bar",
+            label: "Daily outflow",
+            data: series.neg,
+            yAxisID: "yDaily",
+            borderWidth: 0,
+            backgroundColor: "#d62728",
+            order: 2
+          },
+          {
+            type: "line",
+            label: "Cumulative",
+            data: series.cum,
+            yAxisID: "yCum",
+            borderColor: "#111",
+            pointRadius: 0,
+            borderWidth: 2,
+            tension: 0.15,
+            order: 1
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        interaction: { mode: "index", intersect: false },
+        parsing: false,
+        scales: {
+          x: {
+            type: "time",
+            time: { unit: "month" },
+            grid: { display: false }
+          },
+          yDaily: {
+            position: "left",
+            title: { display: true, text: "USD millions (daily)" },
+            grid: { drawOnChartArea: true }
+          },
+          yCum: {
+            position: "right",
+            title: { display: true, text: "USD millions (cumulative)" },
+            grid: { drawOnChartArea: false }
+          }
+        },
+        plugins: {
+          title: { display: true, text: title },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const ds = ctx.dataset;
+                const v = ctx.parsed.y;
+                if (ds.yAxisID === "yCum") {
+                  return ` ${ds.label}: ${fmt(v)} M`;
+                } else {
+                  // daily bars (pos or neg)
+                  const sign = v >= 0 ? "+" : "";
+                  return ` ${ds.label}: ${sign}${fmt(v)} M`;
                 }
               }
-            },
-            legend: {
-              position: "top"
             }
           },
-          scales: {
-            x: {
-              type: "time",
-              time: { unit: "month" },
-              ticks: { maxRotation: 0, autoSkip: true }
-            },
-            yDaily: {
-              position: "left",
-              title: { display: true, text: "USD millions (daily)" },
-              grid: { drawOnChartArea: true }
-            },
-            yCum: {
-              position: "right",
-              title: { display: true, text: "USD millions (cumulative)" },
-              grid: { drawOnChartArea: false }
-            }
-          }
+          legend: { position: "top" }
         }
-      });
-    }
-
-    async function loadAndPlot(canvasId, csvRelPath, titleText) {
-      const fullPath = `${BASE}/${csvRelPath}`.replace(/\/+/g, "/");
-      try {
-        const text = await fetchCSV(fullPath);
-        const rows = parseCSV(text);
-        const series = buildSeries(rows);
-        if (!series.length) throw new Error("No rows after parsing.");
-        makeChart(canvasId, series, titleText);
-      } catch (err) {
-        console.error(err);
-        alert(`Failed to load ${csvRelPath}: ${err.message}`);
       }
-    }
+    });
+  }
 
-    // kick off both charts
-    loadAndPlot("btcChart", "Data/bitcoin_etf_totals_daily.csv", "BTC spot ETF — daily flows & cumulative");
-    loadAndPlot("ethChart", "Data/ethereum_etf_totals_daily.csv", "ETH spot ETF — daily flows & cumulative");
-  </script>
+  async function loadAndPlot(canvasId, csvRelPath, title, errId) {
+    try {
+      // Relative paths work on GitHub Pages since index.html and Data/ share the same folder (docs/)
+      const csvText = await readCSV(csvRelPath);
+      const rows = parseCSV(csvText);
+      if (!rows.length) throw new Error("No rows parsed.");
+      const series = buildSeries(rows);
+      makeChart(canvasId, series, title);
+    } catch (e) {
+      console.error(e);
+      const el = document.getElementById(errId);
+      el.hidden = false;
+      el.textContent = `Failed to load ${csvRelPath}: ${e.message}`;
+    }
+  }
+
+  // Kick off both charts (paths are relative to docs/index.html)
+  loadAndPlot("btcChart", "Data/bitcoin_etf_totals_daily.csv",
+              "BTC spot ETF — daily flows (bars) & cumulative (line)", "btcErr");
+  loadAndPlot("ethChart", "Data/ethereum_etf_totals_daily.csv",
+              "ETH spot ETF — daily flows (bars) & cumulative (line)", "ethErr");
+</script>
 </body>
 </html>
