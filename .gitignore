@@ -25,4 +25,4 @@ Data/**/*.jpg
 Data/**/*.jpeg
 Data/**/*.svg
 Data/**/*.pdf
-Data/Charts/
+Data/Charts/local/
