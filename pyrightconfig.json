@@ -1,0 +1,17 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "typeCheckingMode": "basic",
+  "useLibraryCodeForTypes": true,
+  "exclude": [
+    ".venv",
+    "local",
+    "**/__pycache__",
+    "**/.ipynb_checkpoints",
+    "**/node_modules"
+  ],
+  "reportGeneralTypeIssues": "none",
+  "reportAttributeAccessIssue": "none",
+  "reportUnknownMemberType": "none",
+  "reportOptionalMemberAccess": "warning"
+}
