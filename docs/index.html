@@ -8,13 +8,24 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
   <style>
-    :root { color-scheme: light; }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
-    h1 { margin: 0 0 12px; font-size: 1.4rem; }
+    :root { color-scheme: dark; }
+    body {
+      background:#0b0f1a; color:#e5e7eb;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      margin: 24px;
+    }
+    h1 { margin: 0 0 16px; font-size: 1.4rem; font-weight: 650; }
     .wrap { max-width: 1200px; margin: 0 auto; }
-    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin-bottom: 24px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+    .card {
+      background:#0f172a; border:1px solid #1f2937;
+      border-radius: 12px; padding: 16px; margin-bottom: 24px;
+      box-shadow: 0 1px 2px rgba(0,0,0,.35);
+    }
+    h2 { margin: 0 0 10px; font-size: 1.05rem; font-weight: 600; color:#f3f4f6; }
     canvas { width: 100%; height: 420px; }
-    .err { color: #b91c1c; font-weight: 600; margin: 8px 0 0; }
+    .err { color: #fca5a5; font-weight: 600; margin-top: 8px; }
+    a { color:#93c5fd; text-decoration: none; }
+    a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -22,26 +33,27 @@
   <h1>Spot ETF flows (daily bars) & cumulative (line)</h1>
 
   <div class="card">
-    <h2 style="margin:0 0 8px;">BTC</h2>
+    <h2>BTC</h2>
     <canvas id="btcChart"></canvas>
     <div id="btcErr" class="err" hidden></div>
   </div>
 
   <div class="card">
-    <h2 style="margin:0 0 8px;">ETH</h2>
+    <h2>ETH</h2>
     <canvas id="ethChart"></canvas>
     <div id="ethErr" class="err" hidden></div>
   </div>
 </div>
 
 <script>
-  // --- tiny CSV parser for our simple files ---
+  // make default text colors readable on dark
+  Chart.defaults.color = "#e5e7eb";
+
   async function readCSV(relPath) {
     const res = await fetch(relPath, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status} for ${relPath}`);
     return await res.text();
   }
-
   function parseNumber(s) {
     if (s == null) return NaN;
     let t = String(s).trim().replace(/,/g, "");
@@ -50,36 +62,29 @@
     const v = Number(t);
     return Number.isFinite(v) ? v : NaN;
   }
-
   function parseCSV(text) {
     const lines = text.trim().split(/\r?\n/);
     if (!lines.length) return [];
     const header = lines[0].split(",").map(h => h.trim().toLowerCase());
-    const dateIdx  = header.indexOf("date");
-    // Prefer 'total_usd_millions', fall back to 'total'
+    const dateIdx = header.indexOf("date");
     let totIdx = header.indexOf("total_usd_millions");
     if (totIdx === -1) totIdx = header.indexOf("total");
     if (dateIdx === -1 || totIdx === -1) return [];
-
     const rows = [];
     for (let i = 1; i < lines.length; i++) {
-      if (!lines[i].trim()) continue;
-      const cols = lines[i].split(",");
+      const line = lines[i];
+      if (!line.trim()) continue;
+      const cols = line.split(",");
       const d = new Date(cols[dateIdx]);
       const t = parseNumber(cols[totIdx]);
       if (!isNaN(d.valueOf()) && Number.isFinite(t)) rows.push({ date: d, total: t });
     }
     return rows;
   }
-
-  // Build series: ensure chronological order and compute cumulative here
   function buildSeries(rows) {
     const data = [...rows].sort((a, b) => a.date - b.date);
+    const labels = [], pos = [], neg = [], cum = [];
     let run = 0;
-    const labels = [];
-    const pos = [];
-    const neg = [];
-    const cum = [];
     for (const r of data) {
       run += r.total;
       labels.push(r.date);
@@ -89,26 +94,25 @@
     }
     return { labels, pos, neg, cum };
   }
-
   function fmt(n) {
     return new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(n);
   }
 
   function makeChart(canvasId, series, title) {
     const ctx = document.getElementById(canvasId).getContext("2d");
-
     return new Chart(ctx, {
       type: "bar",
       data: {
         labels: series.labels,
         datasets: [
+          // Bars on RIGHT axis (daily)
           {
             type: "bar",
             label: "Daily inflow",
             data: series.pos,
             yAxisID: "yDaily",
+            backgroundColor: "#60a5fa",
             borderWidth: 0,
-            backgroundColor: "#1f77b4",
             order: 2
           },
           {
@@ -116,16 +120,17 @@
             label: "Daily outflow",
             data: series.neg,
             yAxisID: "yDaily",
+            backgroundColor: "#f87171",
             borderWidth: 0,
-            backgroundColor: "#d62728",
             order: 2
           },
+          // Line on LEFT axis (cumulative)
           {
             type: "line",
             label: "Cumulative",
             data: series.cum,
             yAxisID: "yCum",
-            borderColor: "#111",
+            borderColor: "#ffffff",
             pointRadius: 0,
             borderWidth: 2,
             tension: 0.15,
@@ -135,28 +140,41 @@
       },
       options: {
         responsive: true,
+        maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
         parsing: false,
         scales: {
           x: {
             type: "time",
             time: { unit: "month" },
-            grid: { display: false }
+            ticks: { color: "#cbd5e1" },
+            grid: { color: "rgba(255,255,255,0.08)" }
           },
-          yDaily: {
-            position: "left",
-            title: { display: true, text: "USD millions (daily)" },
-            grid: { drawOnChartArea: true }
-          },
+          // LEFT axis: cumulative (reversed labels request = swap sides, not invert values)
           yCum: {
+            position: "left",
+            title: { display: true, text: "USD millions (cumulative)", color: "#e5e7eb" },
+            ticks: { color: "#cbd5e1" },
+            grid: { color: "rgba(255,255,255,0.08)" }
+          },
+          // RIGHT axis: daily
+          yDaily: {
             position: "right",
-            title: { display: true, text: "USD millions (cumulative)" },
+            title: { display: true, text: "USD millions (daily)", color: "#e5e7eb" },
+            ticks: { color: "#cbd5e1" },
             grid: { drawOnChartArea: false }
           }
         },
         plugins: {
-          title: { display: true, text: title },
+          title: { display: true, text: title, color: "#e5e7eb" },
+          legend: {
+            position: "top",
+            labels: { color: "#e5e7eb", usePointStyle: true, pointStyle: "circle" }
+          },
           tooltip: {
+            backgroundColor: "rgba(15,23,42,0.95)",
+            titleColor: "#e5e7eb",
+            bodyColor: "#e5e7eb",
             callbacks: {
               label: (ctx) => {
                 const ds = ctx.dataset;
@@ -164,14 +182,12 @@
                 if (ds.yAxisID === "yCum") {
                   return ` ${ds.label}: ${fmt(v)} M`;
                 } else {
-                  // daily bars (pos or neg)
                   const sign = v >= 0 ? "+" : "";
                   return ` ${ds.label}: ${sign}${fmt(v)} M`;
                 }
               }
             }
-          },
-          legend: { position: "top" }
+          }
         }
       }
     });
@@ -179,7 +195,6 @@
 
   async function loadAndPlot(canvasId, csvRelPath, title, errId) {
     try {
-      // Relative paths work on GitHub Pages since index.html and Data/ share the same folder (docs/)
       const csvText = await readCSV(csvRelPath);
       const rows = parseCSV(csvText);
       if (!rows.length) throw new Error("No rows parsed.");
@@ -193,7 +208,7 @@
     }
   }
 
-  // Kick off both charts (paths are relative to docs/index.html)
+  // Paths are relative to docs/index.html on GitHub Pages
   loadAndPlot("btcChart", "Data/bitcoin_etf_totals_daily.csv",
               "BTC spot ETF — daily flows (bars) & cumulative (line)", "btcErr");
   loadAndPlot("ethChart", "Data/ethereum_etf_totals_daily.csv",
