@@ -21,11 +21,7 @@
       color: var(--text);
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
     }
-    .wrap {
-      max-width: 1100px;
-      margin: 32px auto 80px;
-      padding: 0 16px;
-    }
+    .wrap { max-width: 1100px; margin: 32px auto 80px; padding: 0 16px; }
     header { margin-bottom: 18px; }
     h1 { margin: 0 0 6px; font-size: 1.6rem; font-weight: 650; }
     p.note { margin: 4px 0 18px; color: var(--muted); font-size: 0.95rem; }
@@ -38,17 +34,14 @@
       box-shadow: 0 1px 0 rgba(255,255,255,0.03), 0 12px 30px rgba(0,0,0,0.35);
     }
     .chart-wrap { position: relative; height: 420px; }
-    .title-row {
-      display: flex; align-items: baseline; justify-content: space-between;
-      gap: 12px; margin: 0 2px 8px;
-    }
+    .title-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 2px 8px; }
     .title-row h2 { margin: 0; font-size: 1.1rem; font-weight: 600; }
     .err { color: #ff8c99; font-size: 0.9rem; margin-top: 6px; display: none; }
     a, a:visited { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
     footer { margin-top: 26px; color: var(--muted); font-size: 0.9rem; }
   </style>
-  <!-- Chart.js + time adapter (adapter is REQUIRED for time axis) -->
+  <!-- Chart.js + time adapter (required for time axis) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
 </head>
@@ -56,7 +49,7 @@
   <div class="wrap">
     <header>
       <h1>Spot ETF Flows — Daily (bars) &amp; Cumulative (line)</h1>
-      <p class="note">Data comes from CSVs in <code>Data/</code>. Bars show daily net flow (USD&nbsp;mm). Line shows cumulative total.</p>
+      <p class="note">Data comes from CSVs in <code>Data/</code>. Bars show daily net flow (USD&nbsp;mm). Line shows cumulative total (re-based to 0 at the first day shown).</p>
     </header>
 
     <section class="panel">
@@ -83,7 +76,7 @@
   </div>
 
   <script>
-    // Use RELATIVE paths (robust with or without query strings on GitHub Pages).
+    // Relative CSV paths work reliably on GitHub Pages (with/without query strings).
     const CSV_BTC = "Data/bitcoin_etf_totals_daily.csv";
     const CSV_ETH = "Data/ethereum_etf_totals_daily.csv";
 
@@ -117,7 +110,7 @@
         throw new Error("Required columns not found: " + header.join(", "));
       }
 
-      const dates = [], totals = [], cum = [];
+      const dates = [], totals = [], cumAbs = [];
       let running = 0;
       for (const r of rows) {
         const d = new Date(r[iDate]);
@@ -126,21 +119,72 @@
         if (!Number.isFinite(t)) continue;
         dates.push(d);
         totals.push(t);
+
         if (iCum != null) {
           const c = coerceNumber(r[iCum]);
-          cum.push(Number.isFinite(c) ? c : NaN);
+          cumAbs.push(Number.isFinite(c) ? c : NaN);
         } else {
           running += t;
-          cum.push(running);
+          cumAbs.push(running);
         }
       }
+
+      // Re-base cumulative so the first point sits exactly at 0
+      const first = cumAbs.find(v => Number.isFinite(v));
+      const cum = first == null ? cumAbs.slice() : cumAbs.map(v => Number.isFinite(v) ? v - first : NaN);
+
       return { dates, totals, cum };
+    }
+
+    // Compute left-axis (cumulative) bounds so zero aligns with the right axis zero pixel.
+    function alignedLeftScale(cum, totals) {
+      // Right axis bounds from bar data
+      const minR_data = Math.min(0, ...totals);
+      const maxR_data = Math.max(0, ...totals);
+      const spanR = Math.max(1e-9, maxR_data - minR_data);
+      const padR = 0.08 * spanR;
+      const minR = minR_data - padR;
+      const maxR = maxR_data + padR;
+
+      // Where zero sits (as a fraction) on the right axis
+      const r = (0 - minR) / (maxR - minR); // in (0,1)
+
+      // Left axis should include cum data & place zero at same fraction r
+      const finite = cum.filter(Number.isFinite);
+      if (!finite.length) return { y: {}, y2: { min: minR, max: maxR } };
+
+      const dmin0 = Math.min(0, ...finite);
+      const dmax0 = Math.max(0, ...finite);
+      const dspan0 = Math.max(1e-9, dmax0 - dmin0);
+
+      let pad = 0.08 * dspan0;
+
+      // Try from max side
+      for (let tries = 0; tries < 4; tries++) {
+        const maxL = dmax0 + pad;
+        const minL = (r * maxL) / (r - 1); // ensures zero sits at same fraction r
+        if (minL <= dmin0 - pad) {
+          return { y: { min: minL, max: maxL }, y2: { min: minR, max: maxR } };
+        }
+        // Try from min side
+        const minL2 = dmin0 - pad;
+        const maxL2 = (minL2 * (r - 1)) / r;
+        if (maxL2 >= dmax0 + pad) {
+          return { y: { min: minL2, max: maxL2 }, y2: { min: minR, max: maxR } };
+        }
+        pad *= 1.6; // expand if neither covered
+      }
+      // Fallback: let Chart.js auto for left, but lock right; re-base still helps start at 0
+      return { y: {}, y2: { min: minR, max: maxR } };
     }
 
     function makeChart(canvasId, series, titleText) {
       const ctx = document.getElementById(canvasId).getContext("2d");
       const pos = series.totals.map(v => Math.max(0, v));
       const neg = series.totals.map(v => Math.min(0, v));
+
+      // Align left/right zeros if possible
+      const aligned = alignedLeftScale(series.cum, series.totals);
 
       return new Chart(ctx, {
         data: {
@@ -149,12 +193,13 @@
             // CUMULATIVE LINE on LEFT axis (y)
             {
               type: "line",
-              label: "Cumulative",
+              label: "Cumulative (rebased)",
               data: series.cum,
               borderColor: "#ffffff",
               borderWidth: 2,
               pointRadius: 0,
-              yAxisID: "y"     // ← LEFT axis
+              yAxisID: "y",
+              spanGaps: true
             },
             // DAILY BARS on RIGHT axis (y2)
             {
@@ -163,7 +208,7 @@
               data: pos,
               backgroundColor: getComputedStyle(document.documentElement).getPropertyValue('--good').trim() || "#1f77b4",
               borderWidth: 0,
-              yAxisID: "y2"    // ← RIGHT axis
+              yAxisID: "y2"
             },
             {
               type: "bar",
@@ -171,7 +216,7 @@
               data: neg,
               backgroundColor: getComputedStyle(document.documentElement).getPropertyValue('--bad').trim() || "#d62728",
               borderWidth: 0,
-              yAxisID: "y2"    // ← RIGHT axis
+              yAxisID: "y2"
             }
           ]
         },
@@ -185,19 +230,21 @@
               ticks: { color: "#c7cfdb" },
               grid: { color: "rgba(255,255,255,0.08)" }
             },
-            // LEFT axis → cumulative
+            // LEFT axis → cumulative (rebased to start at zero)
             y: {
               position: "left",
-              title: { text: "USD (millions) - cumulative", display: true, color: "#c7cfdb" },
+              title: { text: "USD (millions) - cumulative (rebased)", display: true, color: "#c7cfdb" },
               ticks: { color: "#c7cfdb" },
-              grid: { color: "rgba(255,255,255,0.08)" }
+              grid: { color: "rgba(255,255,255,0.08)" },
+              ...aligned.y
             },
-            // RIGHT axis → daily bars
+            // RIGHT axis → daily bars (zero baseline)
             y2: {
               position: "right",
               title: { text: "USD (millions) - daily", display: true, color: "#c7cfdb" },
               ticks: { color: "#c7cfdb" },
-              grid: { drawOnChartArea: false }
+              grid: { drawOnChartArea: false },
+              ...aligned.y2
             }
           },
           plugins: {
