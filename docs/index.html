@@ -41,7 +41,7 @@
     a:hover { text-decoration: underline; }
     footer { margin-top: 26px; color: var(--muted); font-size: 0.9rem; }
   </style>
-  <!-- Chart.js + time adapter (required for time axis) -->
+  <!-- Chart.js + time adapter -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
 </head>
@@ -49,7 +49,7 @@
   <div class="wrap">
     <header>
       <h1>Spot ETF Flows — Daily (bars) &amp; Cumulative (line)</h1>
-      <p class="note">Data comes from CSVs in <code>Data/</code>. Bars show daily net flow (USD&nbsp;mm). Line shows cumulative total (re-based to 0 at the first day shown).</p>
+      <p class="note">Bars show daily net flow (USD&nbsp;mm) on the <b>right</b> axis. Line shows cumulative total (rebased to 0 at first day) on the <b>left</b> axis. Zero lines are pixel-aligned.</p>
     </header>
 
     <section class="panel">
@@ -71,12 +71,11 @@
     </section>
 
     <footer>
-      Tip: If your browser cached old CSVs, hard-refresh (<kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>). This page appends a cache-buster to CSV fetches.
+      Tip: Hard-refresh if needed (<kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>). Fetches include a cache-buster.
     </footer>
   </div>
 
   <script>
-    // Relative CSV paths work reliably on GitHub Pages (with/without query strings).
     const CSV_BTC = "Data/bitcoin_etf_totals_daily.csv";
     const CSV_ETH = "Data/ethereum_etf_totals_daily.csv";
 
@@ -119,7 +118,6 @@
         if (!Number.isFinite(t)) continue;
         dates.push(d);
         totals.push(t);
-
         if (iCum != null) {
           const c = coerceNumber(r[iCum]);
           cumAbs.push(Number.isFinite(c) ? c : NaN);
@@ -128,54 +126,60 @@
           cumAbs.push(running);
         }
       }
-
-      // Re-base cumulative so the first point sits exactly at 0
+      // Rebase cumulative: first finite point -> 0
       const first = cumAbs.find(v => Number.isFinite(v));
       const cum = first == null ? cumAbs.slice() : cumAbs.map(v => Number.isFinite(v) ? v - first : NaN);
 
       return { dates, totals, cum };
     }
 
-    // Compute left-axis (cumulative) bounds so zero aligns with the right axis zero pixel.
-    function alignedLeftScale(cum, totals) {
-      // Right axis bounds from bar data
-      const minR_data = Math.min(0, ...totals);
-      const maxR_data = Math.max(0, ...totals);
-      const spanR = Math.max(1e-9, maxR_data - minR_data);
-      const padR = 0.08 * spanR;
-      const minR = minR_data - padR;
-      const maxR = maxR_data + padR;
-
-      // Where zero sits (as a fraction) on the right axis
-      const r = (0 - minR) / (maxR - minR); // in (0,1)
-
-      // Left axis should include cum data & place zero at same fraction r
-      const finite = cum.filter(Number.isFinite);
-      if (!finite.length) return { y: {}, y2: { min: minR, max: maxR } };
-
-      const dmin0 = Math.min(0, ...finite);
-      const dmax0 = Math.max(0, ...finite);
-      const dspan0 = Math.max(1e-9, dmax0 - dmin0);
-
-      let pad = 0.08 * dspan0;
-
-      // Try from max side
-      for (let tries = 0; tries < 4; tries++) {
-        const maxL = dmax0 + pad;
-        const minL = (r * maxL) / (r - 1); // ensures zero sits at same fraction r
-        if (minL <= dmin0 - pad) {
-          return { y: { min: minL, max: maxL }, y2: { min: minR, max: maxR } };
-        }
-        // Try from min side
-        const minL2 = dmin0 - pad;
-        const maxL2 = (minL2 * (r - 1)) / r;
-        if (maxL2 >= dmax0 + pad) {
-          return { y: { min: minL2, max: maxL2 }, y2: { min: minR, max: maxR } };
-        }
-        pad *= 1.6; // expand if neither covered
+    // Build left-axis bounds so zero aligns with right-axis zero pixel.
+    function alignedScalesFor(series) {
+      // Right axis (bars) data bounds with padding
+      const minRdata = Math.min(0, ...series.totals);
+      const maxRdata = Math.max(0, ...series.totals);
+      let spanR = maxRdata - minRdata;
+      if (!Number.isFinite(spanR) || spanR === 0) { // all zeros?
+        return {
+          y:  { min: -1, max: 1 },  // left
+          y2: { min: -1, max: 1 }   // right
+        };
       }
-      // Fallback: let Chart.js auto for left, but lock right; re-base still helps start at 0
-      return { y: {}, y2: { min: minR, max: maxR } };
+      const padR = 0.08 * spanR;
+      const minR = minRdata - padR;
+      const maxR = maxRdata + padR;
+
+      // Fractional position of zero on the right axis (0..1 from bottom)
+      const r = (0 - minR) / (maxR - minR);
+
+      // Left axis must contain cumulative (rebased) data and place zero at same fraction r
+      const finite = series.cum.filter(Number.isFinite);
+      if (!finite.length) {
+        return { y: {}, y2: { min: minR, max: maxR } };
+      }
+      const minLdata = Math.min(0, ...finite);
+      const maxLdata = Math.max(0, ...finite);
+
+      // Guard against r near 0 or 1 (avoid huge spans)
+      if (r <= 0.02 || r >= 0.98) {
+        return { y: {}, y2: { min: minR, max: maxR } };
+      }
+
+      // Choose span S so that:
+      //   distance below zero = r*S >= |minLdata|
+      //   distance above zero = (1 - r)*S >= maxLdata
+      const SreqNeg = Math.abs(minLdata) / r;
+      const SreqPos = (maxLdata) / (1 - r);
+      let S = Math.max(SreqNeg, SreqPos);
+      S *= 1.05; // small pad
+
+      const minL = -r * S;
+      const maxL = (1 - r) * S;
+
+      return {
+        y:  { min: minL, max: maxL },
+        y2: { min: minR, max: maxR }
+      };
     }
 
     function makeChart(canvasId, series, titleText) {
@@ -183,14 +187,13 @@
       const pos = series.totals.map(v => Math.max(0, v));
       const neg = series.totals.map(v => Math.min(0, v));
 
-      // Align left/right zeros if possible
-      const aligned = alignedLeftScale(series.cum, series.totals);
+      const scalesAligned = alignedScalesFor(series);
 
       return new Chart(ctx, {
         data: {
           labels: series.dates,
           datasets: [
-            // CUMULATIVE LINE on LEFT axis (y)
+            // LEFT axis: cumulative (rebased)
             {
               type: "line",
               label: "Cumulative (rebased)",
@@ -201,7 +204,7 @@
               yAxisID: "y",
               spanGaps: true
             },
-            // DAILY BARS on RIGHT axis (y2)
+            // RIGHT axis: daily bars
             {
               type: "bar",
               label: "Daily inflow",
@@ -230,21 +233,19 @@
               ticks: { color: "#c7cfdb" },
               grid: { color: "rgba(255,255,255,0.08)" }
             },
-            // LEFT axis → cumulative (rebased to start at zero)
             y: {
               position: "left",
               title: { text: "USD (millions) - cumulative (rebased)", display: true, color: "#c7cfdb" },
               ticks: { color: "#c7cfdb" },
               grid: { color: "rgba(255,255,255,0.08)" },
-              ...aligned.y
+              ...scalesAligned.y
             },
-            // RIGHT axis → daily bars (zero baseline)
             y2: {
               position: "right",
               title: { text: "USD (millions) - daily", display: true, color: "#c7cfdb" },
               ticks: { color: "#c7cfdb" },
               grid: { drawOnChartArea: false },
-              ...aligned.y2
+              ...scalesAligned.y2
             }
           },
           plugins: {
@@ -271,7 +272,7 @@
     async function init() {
       try {
         const btc = await loadTotalsCsv(CSV_BTC);
-        makeChart("btcChart", btc, "BTC spot ETF — cumulative (line, left) & daily (bars, right)");
+        makeChart("btcChart", btc, "BTC spot ETF — cumulative (left) & daily (right)");
       } catch (e) {
         const el = document.getElementById("btcErr");
         el.textContent = e.message;
@@ -280,7 +281,7 @@
       }
       try {
         const eth = await loadTotalsCsv(CSV_ETH);
-        makeChart("ethChart", eth, "ETH spot ETF — cumulative (line, left) & daily (bars, right)");
+        makeChart("ethChart", eth, "ETH spot ETF — cumulative (left) & daily (right)");
       } catch (e) {
         const el = document.getElementById("ethErr");
         el.textContent = e.message;
