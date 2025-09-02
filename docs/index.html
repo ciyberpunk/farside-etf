@@ -2,217 +2,182 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Farside ETF flows — BTC & ETH</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- Chart.js + date adapter -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+  <title>Farside ETF Flows – BTC & ETH</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js" defer></script>
   <style>
-    :root { color-scheme: dark; }
-    body {
-      background:#0b0f1a; color:#e5e7eb;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      margin: 24px;
-    }
-    h1 { margin: 0 0 16px; font-size: 1.4rem; font-weight: 650; }
-    .wrap { max-width: 1200px; margin: 0 auto; }
-    .card {
-      background:#0f172a; border:1px solid #1f2937;
-      border-radius: 12px; padding: 16px; margin-bottom: 24px;
-      box-shadow: 0 1px 2px rgba(0,0,0,.35);
-    }
-    h2 { margin: 0 0 10px; font-size: 1.05rem; font-weight: 600; color:#f3f4f6; }
-    canvas { width: 100%; height: 420px; }
-    .err { color: #fca5a5; font-weight: 600; margin-top: 8px; }
-    a { color:#93c5fd; text-decoration: none; }
+    :root { --bg:#0b0c10; --panel:#12141a; --text:#eaeef5; --muted:#97a0af; }
+    html, body { margin:0; padding:0; background:var(--bg); color:var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";}
+    header { padding:24px 16px 8px; text-align:center; }
+    header h1 { margin:0 0 6px; font-size:20px; letter-spacing:.4px; }
+    header p { margin:0; color:var(--muted); font-size:14px; }
+    .wrap { max-width:1200px; margin:16px auto 48px; padding:0 16px; }
+    .grid { display:grid; grid-template-columns:1fr; gap:18px; }
+    @media (min-width: 980px) { .grid { grid-template-columns:1fr 1fr; } }
+    .card { background:var(--panel); border-radius:14px; box-shadow: 0 6px 18px rgba(0,0,0,.25); padding:14px; }
+    .card h2 { margin:0 0 10px; font-size:16px; color:#dfe6f3; font-weight:600; letter-spacing:.2px; }
+    canvas { width:100%; height:420px; }
+    .foot { text-align:center; color:var(--muted); font-size:12px; margin-top:24px; }
+    .err { color:#ff7b7b; font-size:14px; }
+    a { color:#9ec7ff; text-decoration: none; }
     a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>Spot ETF flows (daily bars) & cumulative (line)</h1>
+  <header>
+    <h1>US Spot ETF Flows</h1>
+    <p>Daily flow (bars) and cumulative total (line). Source: <a href="https://farside.co.uk/" target="_blank" rel="noopener">Farside</a>. CSVs from this repo’s <code>Data/</code> folder.</p>
+  </header>
 
-  <div class="card">
-    <h2>BTC</h2>
-    <canvas id="btcChart"></canvas>
-    <div id="btcErr" class="err" hidden></div>
+  <div class="wrap">
+    <div class="grid">
+      <div class="card">
+        <h2>Bitcoin ETFs</h2>
+        <canvas id="btcChart"></canvas>
+        <div id="btcError" class="err" style="display:none;"></div>
+      </div>
+      <div class="card">
+        <h2>Ethereum ETFs</h2>
+        <canvas id="ethChart"></canvas>
+        <div id="ethError" class="err" style="display:none;"></div>
+      </div>
+    </div>
+    <div class="foot">Tip: if you see a blank page, open DevTools (⌥⌘I) → Console/Network for errors.</div>
   </div>
 
-  <div class="card">
-    <h2>ETH</h2>
-    <canvas id="ethChart"></canvas>
-    <div id="ethErr" class="err" hidden></div>
-  </div>
-</div>
+  <script defer>
+    // ---- Config: CSV paths relative to GitHub Pages project root (/farside-etf/)
+    // Your repo layout: /Data/*.csv (sibling to /docs). Because GitHub Pages serves /docs as the site root,
+    // the relative URLs below are correct and resolve to https://ciyberpunk.github.io/farside-etf/Data/....
+    const BTC_CSV = "Data/bitcoin_etf_totals_daily.csv";
+    const ETH_CSV = "Data/ethereum_etf_totals_daily.csv";
 
-<script>
-  // make default text colors readable on dark
-  Chart.defaults.color = "#e5e7eb";
-
-  async function readCSV(relPath) {
-    const res = await fetch(relPath, { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status} for ${relPath}`);
-    return await res.text();
-  }
-  function parseNumber(s) {
-    if (s == null) return NaN;
-    let t = String(s).trim().replace(/,/g, "");
-    if (t === "" || t === "-" || t === "–" || t === "—") return 0;
-    if (t.startsWith("(") && t.endsWith(")")) t = "-" + t.slice(1, -1);
-    const v = Number(t);
-    return Number.isFinite(v) ? v : NaN;
-  }
-  function parseCSV(text) {
-    const lines = text.trim().split(/\r?\n/);
-    if (!lines.length) return [];
-    const header = lines[0].split(",").map(h => h.trim().toLowerCase());
-    const dateIdx = header.indexOf("date");
-    let totIdx = header.indexOf("total_usd_millions");
-    if (totIdx === -1) totIdx = header.indexOf("total");
-    if (dateIdx === -1 || totIdx === -1) return [];
-    const rows = [];
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (!line.trim()) continue;
-      const cols = line.split(",");
-      const d = new Date(cols[dateIdx]);
-      const t = parseNumber(cols[totIdx]);
-      if (!isNaN(d.valueOf()) && Number.isFinite(t)) rows.push({ date: d, total: t });
+    // Quick-n-dirty CSV parser (no external deps). Assumes header row with:
+    // date,total_usd_millions,cumulative_usd_millions
+    function parseCsv(text) {
+      const lines = text.trim().split(/\r?\n/);
+      const header = lines.shift().split(",");
+      const idx = key => header.indexOf(key);
+      const dIdx = idx("date");
+      const tIdx = idx("total_usd_millions");
+      const cIdx = idx("cumulative_usd_millions");
+      if (dIdx < 0 || tIdx < 0 || cIdx < 0) {
+        throw new Error("CSV missing expected headers.");
+      }
+      const rows = lines.map(line => {
+        const parts = line.split(",");
+        return {
+          date: parts[dIdx],
+          total: Number(parts[tIdx]),
+          cum: Number(parts[cIdx])
+        };
+      });
+      return rows;
     }
-    return rows;
-  }
-  function buildSeries(rows) {
-    const data = [...rows].sort((a, b) => a.date - b.date);
-    const labels = [], pos = [], neg = [], cum = [];
-    let run = 0;
-    for (const r of data) {
-      run += r.total;
-      labels.push(r.date);
-      pos.push(Math.max(r.total, 0));
-      neg.push(Math.min(r.total, 0));
-      cum.push(run);
-    }
-    return { labels, pos, neg, cum };
-  }
-  function fmt(n) {
-    return new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(n);
-  }
 
-  function makeChart(canvasId, series, title) {
-    const ctx = document.getElementById(canvasId).getContext("2d");
-    return new Chart(ctx, {
-      type: "bar",
-      data: {
-        labels: series.labels,
-        datasets: [
-          // Bars on RIGHT axis (daily)
-          {
-            type: "bar",
-            label: "Daily inflow",
-            data: series.pos,
-            yAxisID: "yDaily",
-            backgroundColor: "#60a5fa",
-            borderWidth: 0,
-            order: 2
-          },
-          {
-            type: "bar",
-            label: "Daily outflow",
-            data: series.neg,
-            yAxisID: "yDaily",
-            backgroundColor: "#f87171",
-            borderWidth: 0,
-            order: 2
-          },
-          // Line on LEFT axis (cumulative)
-          {
-            type: "line",
-            label: "Cumulative",
-            data: series.cum,
-            yAxisID: "yCum",
-            borderColor: "#ffffff",
-            pointRadius: 0,
-            borderWidth: 2,
-            tension: 0.15,
-            order: 1
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        parsing: false,
-        scales: {
-          x: {
-            type: "time",
-            time: { unit: "month" },
-            ticks: { color: "#cbd5e1" },
-            grid: { color: "rgba(255,255,255,0.08)" }
-          },
-          // LEFT axis: cumulative (reversed labels request = swap sides, not invert values)
-          yCum: {
-            position: "left",
-            title: { display: true, text: "USD millions (cumulative)", color: "#e5e7eb" },
-            ticks: { color: "#cbd5e1" },
-            grid: { color: "rgba(255,255,255,0.08)" }
-          },
-          // RIGHT axis: daily
-          yDaily: {
-            position: "right",
-            title: { display: true, text: "USD millions (daily)", color: "#e5e7eb" },
-            ticks: { color: "#cbd5e1" },
-            grid: { drawOnChartArea: false }
-          }
+    function fmtUSD(v) {
+      const sign = v < 0 ? "-" : "";
+      const abs = Math.abs(v);
+      return `${sign}$${abs.toLocaleString(undefined, { maximumFractionDigits: 1 })}M`;
+    }
+
+    function buildDataset(rows) {
+      const labels = rows.map(r => r.date);
+      const daily = rows.map(r => r.total);
+      const cumulative = rows.map(r => r.cum);
+
+      // Set bar colors by sign
+      const barColors = daily.map(v => v >= 0 ? "rgba(71, 155, 255, 0.85)" : "rgba(255, 99, 132, 0.9)");
+
+      return { labels, daily, cumulative, barColors };
+    }
+
+    function makeChart(canvasId, rows) {
+      const { labels, daily, cumulative, barColors } = buildDataset(rows);
+      const ctx = document.getElementById(canvasId).getContext("2d");
+
+      return new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {
+              type: "bar",
+              label: "Daily flow (USD m)",
+              data: daily,
+              backgroundColor: barColors,
+              borderWidth: 0,
+              yAxisID: "y",
+            },
+            {
+              type: "line",
+              label: "Cumulative (USD m)",
+              data: cumulative,
+              borderWidth: 2,
+              tension: 0.25,
+              pointRadius: 0,
+              borderColor: "rgba(222, 238, 255, 0.9)",
+              yAxisID: "y1",
+            }
+          ]
         },
-        plugins: {
-          title: { display: true, text: title, color: "#e5e7eb" },
-          legend: {
-            position: "top",
-            labels: { color: "#e5e7eb", usePointStyle: true, pointStyle: "circle" }
-          },
-          tooltip: {
-            backgroundColor: "rgba(15,23,42,0.95)",
-            titleColor: "#e5e7eb",
-            bodyColor: "#e5e7eb",
-            callbacks: {
-              label: (ctx) => {
-                const ds = ctx.dataset;
-                const v = ctx.parsed.y;
-                if (ds.yAxisID === "yCum") {
-                  return ` ${ds.label}: ${fmt(v)} M`;
-                } else {
-                  const sign = v >= 0 ? "+" : "";
-                  return ` ${ds.label}: ${sign}${fmt(v)} M`;
+        options: {
+          responsive: true,
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            legend: {
+              labels: { color: "#dfe6f3" }
+            },
+            tooltip: {
+              callbacks: {
+                label: ctx => {
+                  const v = ctx.parsed.y;
+                  return `${ctx.dataset.label}: ${fmtUSD(v)}`;
                 }
               }
             }
+          },
+          scales: {
+            x: {
+              ticks: { color: "#cdd6e5", maxRotation: 0, autoSkip: true, maxTicksLimit: 10 },
+              grid: { color: "rgba(255,255,255,0.05)" }
+            },
+            y: {
+              position: "left",
+              ticks: { color: "#cdd6e5", callback: v => fmtUSD(v) },
+              grid: { color: "rgba(255,255,255,0.07)" }
+            },
+            y1: {
+              position: "right",
+              ticks: { color: "#cdd6e5", callback: v => fmtUSD(v) },
+              grid: { drawOnChartArea: false }
+            }
           }
         }
-      }
-    });
-  }
-
-  async function loadAndPlot(canvasId, csvRelPath, title, errId) {
-    try {
-      const csvText = await readCSV(csvRelPath);
-      const rows = parseCSV(csvText);
-      if (!rows.length) throw new Error("No rows parsed.");
-      const series = buildSeries(rows);
-      makeChart(canvasId, series, title);
-    } catch (e) {
-      console.error(e);
-      const el = document.getElementById(errId);
-      el.hidden = false;
-      el.textContent = `Failed to load ${csvRelPath}: ${e.message}`;
+      });
     }
-  }
 
-  // Paths are relative to docs/index.html on GitHub Pages
-  loadAndPlot("btcChart", "Data/bitcoin_etf_totals_daily.csv",
-              "BTC spot ETF — daily flows (bars) & cumulative (line)", "btcErr");
-  loadAndPlot("ethChart", "Data/ethereum_etf_totals_daily.csv",
-              "ETH spot ETF — daily flows (bars) & cumulative (line)", "ethErr");
-</script>
+    async function loadAndPlot(csvPath, canvasId, errorId) {
+      const $err = document.getElementById(errorId);
+      try {
+        const resp = await fetch(csvPath, { cache: "no-store" });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${csvPath}`);
+        const text = await resp.text();
+        const rows = parseCsv(text);
+        makeChart(canvasId, rows);
+      } catch (e) {
+        console.error(e);
+        $err.style.display = "block";
+        $err.textContent = `Failed to load ${csvPath}: ${e.message}. Check that the CSV exists at that path in the repo and that GitHub Pages is serving from /docs.`;
+      }
+    }
+
+    // Kick off both charts
+    window.addEventListener("DOMContentLoaded", () => {
+      loadAndPlot(BTC_CSV, "btcChart", "btcError");
+      loadAndPlot(ETH_CSV, "ethChart", "ethError");
+    });
+  </script>
 </body>
 </html>
