@@ -26,3 +26,4 @@ Data/**/*.jpeg
 Data/**/*.svg
 Data/**/*.pdf
 Data/Charts/local/
+local/
