@@ -27,3 +27,5 @@ Data/**/*.svg
 Data/**/*.pdf
 Data/Charts/local/
 local/
+scripts/Data/
+scripts/docs/
