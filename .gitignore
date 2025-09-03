@@ -29,3 +29,5 @@ Data/Charts/local/
 local/
 scripts/Data/
 scripts/docs/
+*.pyc
+data/

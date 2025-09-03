@@ -9,7 +9,7 @@ idna==3.10
 importlib_resources==6.5.2
 kiwisolver==1.4.7
 lxml==6.0.1
-matplotlib==3.9.0
+matplotlib>=3.9.2
 numpy==2.0.2
 packaging==25.0
 pandas==2.3.2
